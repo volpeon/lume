@@ -50,7 +50,7 @@ export async function read(
     init = { ...init, headers };
   }
 
-  const useCache = !envBoolean("LUME_NOCACHE");
+  const useCache = !envBoolean("LUME_NOCACHE") && !envBoolean("LUME_NODLCACHE");
 
   if (!useCache) {
     const response = await fetch(url, init);
