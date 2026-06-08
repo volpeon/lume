@@ -2,8 +2,6 @@ import { isUrl } from "./path.ts";
 import { envBoolean } from "./env.ts";
 import { tokens } from "./tokens.ts";
 
-const useCache = envBoolean("LUME_NOCACHE") !== true;
-
 /**
  * Read a local or remote file and return its content.
  * If the file is remote, it will be cached in the `lume_remote_files` cache.
@@ -51,6 +49,8 @@ export async function read(
     headers.set("Authorization", authorization);
     init = { ...init, headers };
   }
+
+  const useCache = !envBoolean("LUME_NOCACHE");
 
   if (!useCache) {
     const response = await fetch(url, init);
