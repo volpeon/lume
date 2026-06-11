@@ -3,25 +3,34 @@ import { getExtension, normalizePath } from "./utils/path.ts";
 import { mergeData } from "./utils/merge_data.ts";
 import { getBasename, getPageUrl } from "./utils/page_url.ts";
 import { getPageDate } from "./utils/page_date.ts";
-import { Page, StaticFile } from "./file.ts";
+import {
+  ensureRawData,
+  Page,
+  RawData,
+  StaticFile,
+  UnknownData,
+} from "./file.ts";
 import { toProxy } from "./components.ts";
 
-import type { Data, RawData } from "./file.ts";
 import type { default as FS, Entry } from "./fs.ts";
 import type { default as Formats, Format } from "./formats.ts";
 import type DataLoader from "./data_loader.ts";
 import type { ScopeFilter } from "./scopes.ts";
-import type { ComponentLoader, Components } from "./components.ts";
+import type {
+  ComponentLoader,
+  Components,
+  ProxyComponents,
+} from "./components.ts";
 import { log } from "./utils/log.ts";
 
-export interface Options {
-  formats: Formats;
-  dataLoader: DataLoader;
-  componentLoader: ComponentLoader;
-  scopedData: Map<string, RawData>;
-  scopedPages: Map<string, RawData[]>;
-  scopedComponents: Map<string, Components>;
-  basenameParsers: BasenameParser[];
+export interface Options<T extends UnknownData> {
+  formats: Formats<T>;
+  dataLoader: DataLoader<T>;
+  componentLoader: ComponentLoader<T>;
+  scopedData: Map<string, Record<string, unknown>>;
+  scopedPages: Map<string, Record<string, unknown>[]>;
+  scopedComponents: Map<string, Components<T>>;
+  basenameParsers: BasenameParser<T>[];
   fs: FS;
   prettyUrls: boolean;
   components: {
@@ -34,18 +43,18 @@ export interface Options {
  * Scan and load files from the source folder
  * with the data, pages, assets and static files
  */
-export default class Source {
+export default class Source<T extends { comp: ProxyComponents }> {
   /** Filesystem reader to scan folders */
   fs: FS;
 
   /** To load all _data files */
-  dataLoader: DataLoader;
+  dataLoader: DataLoader<T>;
 
   /** To load all components */
-  componentLoader: ComponentLoader;
+  componentLoader: ComponentLoader<T>;
 
   /** Info about how to handle different file formats */
-  formats: Formats;
+  formats: Formats<T>;
 
   /** The list of paths to ignore */
   ignored = new Set<string>();
@@ -54,13 +63,13 @@ export default class Source {
   filters: ScopeFilter[] = [];
 
   /** The data assigned per path */
-  scopedData: Map<string, RawData>;
+  scopedData: Map<string, Record<string, unknown>>;
 
   /** The pages assigned per path */
-  scopedPages: Map<string, RawData[]>;
+  scopedPages: Map<string, Record<string, unknown>[]>;
 
   /** The components assigned per path */
-  scopedComponents: Map<string, Components>;
+  scopedComponents: Map<string, Components<T>>;
 
   /** Use pretty URLs */
   prettyUrls: boolean;
@@ -77,15 +86,17 @@ export default class Source {
   };
 
   /** The data assigned per path */
-  data = new Map<string, Partial<Data>>();
+  data = new Map<string, Partial<T> & { basename: string }>();
 
   /** Custom parsers for basenames */
-  basenameParsers: BasenameParser[] = [];
+  basenameParsers: BasenameParser<T>[] = [];
 
   /** Files added with `site.add()` or `site.copy()` */
   addedFiles = new Map<string, [string | Destination, boolean]>();
 
-  constructor(options: Options) {
+  /** */
+
+  constructor(options: Options<T>) {
     this.dataLoader = options.dataLoader;
     this.componentLoader = options.componentLoader;
     this.fs = options.fs;
@@ -128,9 +139,11 @@ export default class Source {
     this.addedFiles.set(from, [to, isCopy]);
   }
 
-  async build(...buildFilters: BuildFilter[]): Promise<[Page[], StaticFile[]]> {
-    const pages: Page[] = [];
-    const staticFiles: StaticFile[] = [];
+  async build(
+    ...buildFilters: BuildFilter<T>[]
+  ): Promise<[ProcessedPage<T>[], ProcessedStaticFile<T>[]]> {
+    const pages: ProcessedPage<T>[] = [];
+    const staticFiles: ProcessedStaticFile<T>[] = [];
     this.data.clear();
 
     await this.#addDirectory(
@@ -186,13 +199,13 @@ export default class Source {
   }
 
   async #addDirectory(
-    buildFilters: BuildFilter[],
+    buildFilters: BuildFilter<T>[],
     dir: Entry,
     parentPath: string,
-    parentComponents: Components,
-    parentData: Partial<Data>,
-    pages: Page[],
-    staticFiles: StaticFile[],
+    parentComponents: Components<T>,
+    parentData: Partial<T>,
+    pages: ProcessedPage<T>[],
+    staticFiles: ProcessedStaticFile<T>[],
     destination?: [Destination, boolean],
   ): Promise<void> {
     if (buildFilters.some((filter) => !filter(dir))) {
@@ -201,7 +214,7 @@ export default class Source {
 
     // Load _data
     const dirData = await this.#loadDirData(dir, parentData);
-    let dirPath = posix.join(parentPath, dirData.basename!);
+    let dirPath = posix.join(parentPath, dirData.basename);
 
     // Load _components
     const dirComponents = await this.#loadDirComponents(
@@ -331,12 +344,12 @@ export default class Source {
   }
 
   async #addFile(
-    buildFilters: BuildFilter[],
+    buildFilters: BuildFilter<T>[],
     file: Entry,
     dirPath: string,
-    dirData: Partial<Data>,
-    pages: Page[],
-    staticFiles: StaticFile[],
+    dirData: Partial<T> & { basename: string },
+    pages: ProcessedPage<T>[],
+    staticFiles: ProcessedStaticFile<T>[],
     destination?: [Destination, boolean],
   ): Promise<void> {
     // The file is added with `site.add("file.ext")`
@@ -440,8 +453,8 @@ export default class Source {
   /** Load a folder's _data and merge it with the parent data  */
   async #loadDirData(
     dir: Entry,
-    parentData: Partial<Data>,
-  ): Promise<Partial<Data>> {
+    parentData: Partial<T>,
+  ): Promise<Partial<T> & { basename: string }> {
     // Parse the directory's basename
     const { basename, ...parsedData } = runBasenameParsers(
       dir.name,
@@ -450,7 +463,7 @@ export default class Source {
     );
 
     // Load _data files
-    const dirDatas: RawData[] = [];
+    const dirDatas: Record<string, unknown>[] = [];
 
     for (const entry of dir.children.values()) {
       if (
@@ -474,7 +487,7 @@ export default class Source {
       scopedData,
       parsedData,
       ...dirDatas,
-    ) as Partial<Data>;
+    );
   }
 
   /**
@@ -483,12 +496,12 @@ export default class Source {
    */
   async #loadDirComponents(
     dir: Entry,
-    parentComponents: Components,
-    data: Partial<Data>,
-  ): Promise<Components> {
+    parentComponents: Components<T>,
+    data: Partial<T> & { basename: string },
+  ): Promise<Components<T>> {
     // Components registered from site.component()
     const scopedComponents = this.scopedComponents.get(dir.path);
-    let loadedComponents: Components | undefined;
+    let loadedComponents: Components<T> | undefined;
 
     // Load _components files
     for (const entry of dir.children.values()) {
@@ -512,8 +525,10 @@ export default class Source {
 
   async *#getDirPages(
     path: string,
-    dirData: Partial<Data>,
-  ): AsyncGenerator<Page> {
+    dirData: Partial<T>,
+  ): AsyncGenerator<
+    ProcessedPage<T>
+  > {
     const pages = this.scopedPages.get(path);
     if (!pages) {
       return;
@@ -524,25 +539,31 @@ export default class Source {
         /\.[\w.]+$/,
         "",
       );
-      const page = new Page();
-      page.data = mergeData(
+      const mergedData = mergeData(
         dirData,
         { basename, date: new Date() },
         data,
-      ) as Data;
+      );
+      const page = new Page(mergedData);
 
       const url = getPageUrl(page, this.prettyUrls, path);
       if (!url) {
         continue;
       }
-      page.data.url = url;
-      page.data.basename = getBasename(url);
-      page.data.date = getPageDate(page);
-      page.data.page = page;
+
+      if (
+        !page.overwrite({
+          url,
+          basename: getBasename(url),
+          date: getPageDate(page),
+        })
+      ) {
+        continue;
+      }
 
       // Prevent running the layout if the page is an asset
-      if (!data.layout && !page.isHTML) {
-        delete page.data.layout;
+      if (!mergedData.layout && !page.isHTML) {
+        delete mergedData.layout;
       }
 
       yield page;
@@ -552,11 +573,11 @@ export default class Source {
   /** Load a page from a file entry */
   async #loadPage(
     entry: Entry,
-    format: Format,
-    dirData: Partial<Data>,
+    format: Format<T>,
+    dirData: Partial<T>,
     dirPath: string,
     destination?: Destination | string,
-  ): Promise<Page | undefined> {
+  ): Promise<ProcessedPage<T> | undefined> {
     // The format is a page or asset
     const { loader, ext } = format;
 
@@ -571,15 +592,8 @@ export default class Source {
       dirData,
     );
 
-    // Create the page
-    const page = new Page({
-      path: entry.path.slice(0, -ext.length),
-      ext,
-      entry,
-    });
-
     // Load and merge the page data
-    let pageData: RawData = {};
+    let pageData: UnknownData = {};
     try {
       pageData = await entry.getContent(loader);
     } catch (error) {
@@ -590,28 +604,46 @@ export default class Source {
       );
       return;
     }
-    page.data = mergeData(
+    const data = mergeData(
       dirData,
       { basename },
       this.scopedData.get(entry.path) || {},
       parsedData,
       pageData,
-    ) as Data;
+    );
+
+    if (!ensureRawData(data)) {
+      throw new Error("Malformed page data detected");
+    }
+
+    // Create the page
+    const page = new Page<Partial<T> & RawData & { basename: string }>(data, {
+      path: entry.path.slice(0, -ext.length),
+      ext,
+      entry,
+    });
 
     // Calculate the page URL
-    const url = getPageUrl(page, this.prettyUrls, dirPath, destination);
+    const url = getPageUrl(
+      page,
+      this.prettyUrls,
+      dirPath,
+      destination,
+    );
 
     if (!url) {
       return;
     }
-    page.data.url = url;
-    page.data.basename = getBasename(url);
 
-    // Calculate the page date
-    page.data.date = getPageDate(page);
-
-    // Save the page object in the data object
-    page.data.page = page;
+    if (
+      !page.overwrite({
+        url,
+        basename: getBasename(url),
+        date: getPageDate(page),
+      })
+    ) {
+      return;
+    }
 
     // Prevent running the layout if the page is not HTML
     if (!pageData.layout && !page.isHTML) {
@@ -622,17 +654,35 @@ export default class Source {
   }
 }
 
+export type ProcessedStaticFile<T> = StaticFile<
+  Partial<T> & RawData & {
+    basename: string;
+    url: string;
+  }
+>;
+
+export type ProcessedPage<T> = Page<
+  Partial<T> & RawData & {
+    url: string;
+    basename: string;
+    date: Date;
+  }
+>;
+
 export type Destination = (path: string) => string;
 
-export type BuildFilter = (entry: Entry, page?: Page) => boolean;
+export type BuildFilter<T> = (
+  entry: Entry,
+  page?: ProcessedPage<T>,
+) => boolean;
 
-export type BasenameParser = (
+export type BasenameParser<T> = (
   filename: string,
-  parentData: Partial<Data>,
-) => RawData | undefined;
+  parentData: Partial<T>,
+) => Record<string, unknown> | undefined;
 
 /** Merge the cascade components */
-function mergeComponents(...components: Components[]): Components {
+function mergeComponents<T>(...components: Components<T>[]): Components<T> {
   return components.reduce((previous, current) => {
     const components = new Map(previous);
 
@@ -653,12 +703,12 @@ function mergeComponents(...components: Components[]): Components {
   });
 }
 
-function runBasenameParsers(
+function runBasenameParsers<T>(
   basename: string,
-  basenameParsers: BasenameParser[],
-  parentData: Partial<Data>,
-): RawData {
-  const data: RawData = { basename };
+  basenameParsers: BasenameParser<T>[],
+  parentData: Partial<T>,
+): { [key: string]: unknown; basename: string } {
+  const data: { [key: string]: unknown; basename: string } = { basename };
 
   for (const parser of basenameParsers) {
     const res = parser(basename, parentData);
@@ -675,23 +725,20 @@ function runBasenameParsers(
   return data;
 }
 
-function createFile(
+function createFile<T extends UnknownData>(
   entry: Entry,
   ext: string,
   dirPath: string,
-  dirData: Partial<Data>,
+  dirData: T,
   destination?: string | Destination,
-): StaticFile {
+): StaticFile<T & { url: string }> {
   const url = typeof destination === "string"
     ? destination
     : typeof destination === "function"
     ? destination(posix.join(dirPath, entry.name))
     : posix.join(dirPath, entry.name);
 
-  return StaticFile.create({
-    ...dirData,
-    url,
-  }, {
+  return StaticFile.create({ ...dirData, url }, {
     ext,
     path: entry.path.slice(0, -ext.length),
     entry,

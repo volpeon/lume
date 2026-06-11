@@ -1,7 +1,7 @@
 import type { Engine } from "./renderer.ts";
 import type { Loader } from "./fs.ts";
 
-export interface Format {
+export interface Format<T> {
   /** The file extension for this format */
   ext: string;
 
@@ -22,15 +22,15 @@ export interface Format {
 }
 
 /** Class to store loaders, engines and other stuff related with different formats */
-export default class Formats {
-  entries = new Map<string, Format>();
+export default class Formats<T> {
+  entries = new Map<string, Format<T>>();
 
   get size(): number {
     return this.entries.size;
   }
 
   /** Assign a value to a extension */
-  set(format: Format, override = true): void {
+  set(format: Format<T>, override = true): void {
     format.ext = format.ext.toLowerCase();
     const ext = format.ext;
     const existing = this.entries.get(ext);
@@ -64,7 +64,7 @@ export default class Formats {
   }
 
   /** Returns a format by extension */
-  get(extension: string): Format | undefined {
+  get(extension: string): Format<T> | undefined {
     return this.entries.get(extension.toLowerCase());
   }
 
@@ -79,7 +79,7 @@ export default class Formats {
   }
 
   /** Search and return the associated format for a path */
-  search(path: string): Format | undefined {
+  search(path: string): Format<T> | undefined {
     path = path.toLowerCase();
 
     for (const format of this.entries.values()) {

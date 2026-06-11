@@ -13,7 +13,9 @@
     "jsxImportSource": "lume",
     "types": [
       "./types.ts"
-    ]
+    ],
+    "strict": true,
+		"noUncheckedIndexedAccess": true
   },
   "tasks": {
     "test": {

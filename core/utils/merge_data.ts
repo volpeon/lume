@@ -1,5 +1,4 @@
 import { isPlainObject } from "./object.ts";
-import { Data } from "../file.ts";
 
 export type MergeStrategy =
   | "array"
@@ -13,8 +12,11 @@ interface DataToMerge {
   [key: string]: unknown;
 }
 
+type Merge<T extends unknown[]> = T extends [infer U, ...infer R] ? U & Merge<R>
+  : unknown;
+
 /** Merge the cascade data */
-export function mergeData(...datas: DataToMerge[]): DataToMerge {
+export function mergeData<T extends DataToMerge[]>(...datas: T): Merge<T> {
   return datas.reduce((previous, current) => {
     const data: DataToMerge = { ...previous, ...current };
 
@@ -51,11 +53,11 @@ export function mergeData(...datas: DataToMerge[]): DataToMerge {
     }
 
     return data;
-  });
+  }) as Merge<T>;
 }
 
 /** Override some data recursively */
-export function overrideData(data: Data, override: Data): void {
+export function overrideData(data: DataToMerge, override: DataToMerge): void {
   if (!override) {
     return;
   }

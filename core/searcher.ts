@@ -1,35 +1,39 @@
 import { globToRegExp } from "../deps/path.ts";
 import { normalizePath } from "./utils/path.ts";
 
-import type { Data, Page, StaticFile } from "./file.ts";
+import type { Page, StaticFile, UnknownData } from "./file.ts";
 
-export interface Options {
-  /** The pages array */
-  pages: Page[];
-
-  /** The static files array */
-  files: StaticFile[];
-
-  /** Context data */
-  sourceData: Map<string, Partial<Data>>;
-
-  /** Filters to apply to all page searches */
-  filters?: Filter[];
+export interface SearcherData extends UnknownData {
+  url?: unknown;
 }
 
-type Filter = (data: Data) => boolean;
+export interface Options<T extends UnknownData> {
+  /** The pages array */
+  pages: Page<T>[];
+
+  /** The static files array */
+  files: StaticFile<T>[];
+
+  /** Context data */
+  sourceData: Map<string, T>;
+
+  /** Filters to apply to all page searches */
+  filters?: Filter<T>[];
+}
+
+type Filter<T extends UnknownData> = (page: Page<T>) => boolean;
 type Condition = [string, string, unknown];
 
 /** Search helper */
-export default class Searcher {
-  #pages: Page[];
-  #files: StaticFile[];
-  #sourceData: Map<string, Partial<Data>>;
-  #cache = new Map<string, Data[]>();
+export default class Searcher<T extends SearcherData> {
+  #pages: Page<T>[];
+  #files: StaticFile<T>[];
+  #sourceData: Map<string, T>;
+  #cache = new Map<string, Page<T>[]>();
   #cacheFiles = new Map<string, string[]>();
-  #filters: Filter[];
+  #filters: Filter<T>[];
 
-  constructor(options: Options) {
+  constructor(options: Options<T>) {
     this.#pages = options.pages;
     this.#files = options.files;
     this.#sourceData = options.sourceData;
@@ -45,26 +49,26 @@ export default class Searcher {
   /**
    * Return the data in the scope of a path (file or folder)
    */
-  data<T>(path = "/"): T & Partial<Data> | undefined {
+  data(path = "/"): T | undefined {
     const normalized = normalizePath(path);
     const dirData = this.#sourceData.get(normalized);
 
     if (dirData) {
-      return dirData as T & Partial<Data>;
+      return dirData;
     }
 
     const result = this.#pages.find((page) =>
-      page.data.url === normalized || page.data.sourcePath === normalized
+      page.data.url === normalized || page.sourcePath === normalized
     );
 
     if (result) {
-      return result.data as T & Partial<Data>;
+      return result.data;
     }
   }
 
   /** Search pages */
-  pages<T>(query?: string, sort?: string, limit?: number): (Data & T)[] {
-    const result = this.#searchPages<T>(query, sort);
+  pages(query?: string, sort?: string, limit?: number): Page<T>[] {
+    const result = this.#searchPages(query, sort);
 
     if (!limit) {
       return result;
@@ -74,8 +78,8 @@ export default class Searcher {
   }
 
   /** Search and return the first page */
-  page<T>(query?: string, sort?: string): Data & T | undefined {
-    return this.pages<T>(query, sort)[0];
+  page(query?: string, sort?: string): Page<T> | undefined {
+    return this.pages(query, sort)[0];
   }
 
   /** Search files using a glob */
@@ -89,11 +93,11 @@ export default class Searcher {
   }
 
   /** Returns all values from the same key of a search */
-  values<T = unknown>(key: string, query?: string): T[] {
-    const values = new Set();
+  values<K extends keyof T>(key: K, query?: string): T[K][] {
+    const values = new Set<T[K]>();
 
-    this.#searchPages(query).forEach((data) => {
-      const value = data[key];
+    this.#searchPages(query).forEach((page) => {
+      const value = page.data[key];
 
       if (Array.isArray(value)) {
         value.forEach((v) => values.add(v));
@@ -102,38 +106,38 @@ export default class Searcher {
       }
     });
 
-    return Array.from(values) as T[];
+    return Array.from(values);
   }
 
   /** Return the next page of a search */
-  nextPage<T = unknown>(
+  nextPage(
     url: string,
     query?: string,
     sort?: string,
-  ): Data & T | undefined {
-    const pages = this.#searchPages<T>(query, sort);
-    const index = pages.findIndex((data) => data.url === url);
+  ): Page<T> | undefined {
+    const pages = this.#searchPages(query, sort);
+    const index = pages.findIndex((page) => page.data.url === url);
 
     return (index === -1) ? undefined : pages[index + 1];
   }
 
   /** Return the previous page of a search */
-  previousPage<T = unknown>(
+  previousPage(
     url: string,
     query?: string,
     sort?: string,
-  ): Data & T | undefined {
-    const pages = this.#searchPages<T>(query, sort);
-    const index = pages.findIndex((data) => data.url === url);
+  ): Page<T> | undefined {
+    const pages = this.#searchPages(query, sort);
+    const index = pages.findIndex((page) => page.data.url === url);
 
     return (index <= 0) ? undefined : pages[index - 1];
   }
 
-  #searchPages<T = unknown>(query?: string, sort = "date"): (Data & T)[] {
+  #searchPages(query?: string, sort = "date"): Page<T>[] {
     const id = JSON.stringify([query, sort]);
 
     if (this.#cache.has(id)) {
-      return [...this.#cache.get(id)!] as (Data & T)[];
+      return [...this.#cache.get(id)!];
     }
 
     const compiledFilter = buildFilter(query);
@@ -142,12 +146,12 @@ export default class Searcher {
       : this.#filters;
     const result = filters.reduce(
       (pages, filter) => pages.filter(filter),
-      this.#pages.map((page) => page.data),
+      this.#pages,
     );
 
     result.sort(buildSort(sort));
     this.#cache.set(id, result);
-    return [...result] as (Data & T)[];
+    return [...result];
   }
 
   #searchFiles(globOrRegexp?: RegExp | string): string[] {
@@ -181,7 +185,9 @@ export default class Searcher {
  * example: "title=foo level<3"
  * returns: (page) => page.data.title === "foo" && page.data.level < 3
  */
-export function buildFilter(query = ""): Filter | undefined {
+export function buildFilter<T extends UnknownData>(
+  query = "",
+): Filter<T> | undefined {
   // (?:(not)?(fieldName)(operator))?(value|"value"|'value')
   const matches = query
     ? query.matchAll(
@@ -208,7 +214,7 @@ export function buildFilter(query = ""): Filter | undefined {
       operator = "!" + operator;
     }
 
-    conditions.push([key, operator, compileValue(value)]);
+    conditions.push([key, operator!, compileValue(value)]);
   }
 
   if (conditions.length) {
@@ -364,7 +370,7 @@ function compileCondition(
  * example: "foo" => "foo"
  * example: "2021-06-12" => new Date(2021, 05, 12)
  */
-function compileValue(value: string): unknown {
+function compileValue(value?: string): unknown {
   if (!value) {
     return value;
   }
@@ -416,8 +422,8 @@ function compileValue(value: string): unknown {
     const [, year, month, day, hour, minute, second] = match;
 
     return new Date(
-      parseInt(year),
-      parseInt(month) - 1,
+      parseInt(year!),
+      parseInt(month!) - 1,
       day ? parseInt(day) : 1,
       hour ? parseInt(hour) : 0,
       minute ? parseInt(minute) : 0,
@@ -434,7 +440,7 @@ function compileValue(value: string): unknown {
  * example: "title=desc"
  * returns: (a, b) => a.title > b.title
  */
-export function buildSort(sort: string): (a: Data, b: Data) => number {
+export function buildSort(sort: string): (a: unknown, b: unknown) => number {
   let fn = "0";
   let init = "";
 
@@ -448,7 +454,7 @@ export function buildSort(sort: string): (a: Data, b: Data) => number {
     }
 
     let [, key, direction] = match;
-    key = key.replaceAll(".", "?.");
+    key = key!.replaceAll(".", "?.");
     switch (direction) {
       case "asc-locale":
         init = "const collator = new Intl.Collator();";
@@ -472,7 +478,7 @@ export function buildSort(sort: string): (a: Data, b: Data) => number {
   });
 
   return new Function(`${init} return function (a, b) { return ${fn}; }`)() as (
-    a: Data,
-    b: Data,
+    a: unknown,
+    b: unknown,
   ) => number;
 }

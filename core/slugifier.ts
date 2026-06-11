@@ -59,7 +59,7 @@ export default function createSlugifier(
 
     string = string.replaceAll(/[^a-z\d/-]/giu, (char) => {
       if (char in replace) {
-        return replace[char];
+        return replace[char]!;
       }
 
       if (alphanumeric) {

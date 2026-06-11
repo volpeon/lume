@@ -3,31 +3,33 @@ import textLoader from "./loaders/text.ts";
 import { posix } from "../deps/path.ts";
 import { log } from "./utils/log.ts";
 
-import type { Data } from "./file.ts";
 import type Formats from "./formats.ts";
+import { UnknownData } from "./file.ts";
 
-export interface Options {
+export interface Options<T> {
   /** The registered file formats */
-  formats: Formats;
+  formats: Formats<T>;
 }
 
 /**
  * Class to load components from the _components folder.
  */
-export class ComponentLoader {
+export class ComponentLoader<
+  T extends UnknownData & { children?: unknown; content?: unknown },
+> {
   /** List of loaders and engines used by extensions */
-  formats: Formats;
+  formats: Formats<T>;
 
-  constructor(options: Options) {
+  constructor(options: Options<T>) {
     this.formats = options.formats;
   }
 
   /** Load a directory of components */
   async load(
     dirEntry: Entry,
-    data: Partial<Data>,
-    components?: Components,
-  ): Promise<Components> {
+    data: Partial<T>,
+    components?: Components<T>,
+  ): Promise<Components<T>> {
     if (!components) {
       components = new Map();
     }
@@ -45,7 +47,9 @@ export class ComponentLoader {
         }
 
         const name = entry.name.toLowerCase();
-        const subComponents = (components.get(name) || new Map()) as Components;
+        const subComponents = (components.get(name) || new Map()) as Components<
+          T
+        >;
         components.set(name, subComponents);
 
         await this.load(entry, data, subComponents);
@@ -65,8 +69,8 @@ export class ComponentLoader {
   /** Load a component folder (a folder with a comp.* file) */
   async #loadComponentFolder(
     entry: Entry,
-    data: Partial<Data>,
-  ): Promise<Component | undefined> {
+    data: Partial<T>,
+  ): Promise<Component<T> | undefined> {
     const compEntry = findChild(
       entry,
       (entry) => entry.name.startsWith("comp."),
@@ -111,9 +115,9 @@ export class ComponentLoader {
   /** Load a component file */
   async #loadComponent(
     entry: Entry,
-    dirData: Partial<Data>,
+    dirData: Partial<T>,
     defaultName?: string,
-  ): Promise<Component | undefined> {
+  ): Promise<Component<T> | undefined> {
     const format = this.formats.search(entry.name);
 
     if (!format) {
@@ -130,7 +134,7 @@ export class ComponentLoader {
     const { css, js, inheritData, content, ...data } = rawComponent;
     const name = defaultName ?? entry.name.slice(0, -ext.length);
 
-    const render = async (props?: Record<string, unknown>): Promise<string> => {
+    const render = async (props: T): Promise<string> => {
       const currData = inheritData !== false
         ? { ...dirData, ...data, ...props }
         : { ...data, ...props };
@@ -163,26 +167,26 @@ export class ComponentLoader {
   }
 }
 
-export type Components = Map<string, Component | Components>;
+export type Components<T> = Map<string, Component<T> | Components<T>>;
 
-export interface Component {
+export interface Component<T> {
   /** Name of the component (used to get it from templates) */
   name: string;
 
   /** The function to render the component */
-  render: (props: Record<string, unknown>) => string | Promise<string>;
+  render: (props: T) => string | Promise<string>;
 
   /** Optional CSS and JS code needed to style the component (global, only inserted once) */
   assets: Map<string, string | Entry>;
 }
 
 /** Component defined directly by the user */
-export interface UserComponent {
+export interface UserComponent<T> {
   /** Name of the component (used to get it from templates) */
   name: string;
 
   /** The function to render the component */
-  render: (props: Record<string, unknown>) => string | Promise<string>;
+  render: (props: T) => string | Promise<string>;
 
   /** Optional CSS code needed to style the component (global, only inserted once) */
   css?: string;
@@ -315,7 +319,7 @@ export async function compileJS(
   await stop();
 
   const decoder = new TextDecoder();
-  return decoder.decode(outputFiles[0].contents);
+  return decoder.decode(outputFiles[0]?.contents);
 }
 
 async function getEntryContent(entry?: Entry | string): Promise<string> {
@@ -341,8 +345,8 @@ export interface ProxyComponents {
  * Create and returns a proxy to use the components
  * as comp.name() instead of components.get("name").render()
  */
-export function toProxy(
-  components: Components,
+export function toProxy<T>(
+  components: Components<T>,
   extraCode: Map<string, string | Entry>,
 ): ProxyComponents {
   const node = {
@@ -379,7 +383,7 @@ export function toProxy(
       }
 
       // Return the function to render the component
-      return (props: Record<string, unknown>) => component.render(props);
+      return (props: T) => component.render(props);
     },
   }) as unknown as ProxyComponents;
 }

@@ -1,5 +1,5 @@
 import { join, posix } from "../deps/path.ts";
-import { Merge, merge } from "./utils/object.ts";
+import { isPlainObject, Merge, merge } from "./utils/object.ts";
 import { isUrl, normalizePath } from "./utils/path.ts";
 import { envBoolean, setEnv } from "./utils/env.ts";
 import { log } from "./utils/log.ts";
@@ -20,7 +20,7 @@ import Searcher from "./searcher.ts";
 import Scripts from "./scripts.ts";
 import FSWatcher from "../core/watcher.ts";
 import { FSWriter } from "./writer.ts";
-import { filesToPages, Page } from "./file.ts";
+import { filesToPages, Page, UnknownData } from "./file.ts";
 import textLoader from "./loaders/text.ts";
 import binaryLoader from "./loaders/binary.ts";
 import Server from "./server.ts";
@@ -29,10 +29,25 @@ import DebugBar from "./debugbar.ts";
 import notFound from "../middlewares/not_found.ts";
 
 import type { Entry, Loader } from "./fs.ts";
-import type { BasenameParser, Destination } from "./source.ts";
-import type { Components, UserComponent } from "./components.ts";
-import { Data, RawData, StaticFile } from "./file.ts";
-import type { Engine, Helper, HelperOptions, HelperThis } from "./renderer.ts";
+import type {
+  BasenameParser,
+  Destination,
+  ProcessedPage,
+  ProcessedStaticFile,
+} from "./source.ts";
+import type {
+  Components,
+  ProxyComponents,
+  UserComponent,
+} from "./components.ts";
+import { StaticFile } from "./file.ts";
+import type {
+  Engine,
+  Helper,
+  HelperOptions,
+  HelperThis,
+  RendererData,
+} from "./renderer.ts";
 import type { Event, EventListener, EventOptions } from "./events.ts";
 import type { Processor } from "./processors.ts";
 import type { Extensions } from "./utils/path.ts";
@@ -41,6 +56,46 @@ import type { Middleware } from "./server.ts";
 import type { ScopeFilter } from "./scopes.ts";
 import type { ScriptOrFunction } from "./scripts.ts";
 import type { MergeStrategy } from "./utils/merge_data.ts";
+
+interface MinimalData {
+  [key: string]: unknown;
+  children?: unknown;
+  content?: unknown;
+  date?: string | number | Date | undefined;
+  comp?: ProxyComponents | undefined;
+  layout?: string | undefined;
+  draft?: boolean;
+  renderOrder?: number | undefined;
+  templateEngine?: string | string[] | undefined;
+}
+
+function validateMinimalData(data: unknown): data is MinimalData {
+  if (!isPlainObject(data)) {
+    return false;
+  }
+
+  if (
+    typeof data.date !== "undefined" && typeof data.date !== "string" &&
+    typeof data.date !== "number" &&
+    !(data.date instanceof Date)
+  ) {
+    return false;
+  }
+
+  if (typeof data.comp !== "object") {
+    return false;
+  }
+
+  if (typeof data.layout !== "undefined" && typeof data.layout !== "string") {
+    return false;
+  }
+
+  if (typeof data.draft !== "undefined" && typeof data.draft !== "boolean") {
+    return false;
+  }
+
+  return true;
+}
 
 /** Default options of the site */
 const defaults = {
@@ -75,7 +130,7 @@ const defaults = {
  * This is the heart of Lume,
  * it contains everything needed to build the site
  */
-export default class Site {
+export default class Site<T extends UnknownData = UnknownData> {
   options: Merge<SiteOptions, typeof defaults>;
 
   /** Internal data. Used to save arbitrary data by plugins and processors */
@@ -85,53 +140,52 @@ export default class Site {
   fs: FS;
 
   /** Info about how to handle different file formats */
-  formats: Formats;
+  formats: Formats<T>;
 
   /** To load all _data files */
-  dataLoader: DataLoader;
+  dataLoader: DataLoader<T>;
 
   /** To load reusable components */
-  componentLoader: ComponentLoader;
+  componentLoader: ComponentLoader<T>;
 
   /** To scan the src folder */
-  source: Source;
+  source: Source<T>;
 
   /** To update pages of the same scope after any change */
   scopes: Scopes;
 
   /** To store and run the processors */
-  processors: Processors;
+  processors: Processors<T>;
 
   /** To store and run the pre-processors */
-  preprocessors: Processors;
+  preprocessors: Processors<T>;
 
   /** To render the pages using any template engine */
-  renderer: Renderer;
+  renderer: Renderer<T>;
 
   /** To listen and dispatch events */
-  // deno-lint-ignore no-explicit-any
-  events: Events<any>;
+  events: Events<SiteEvent<T>>;
 
   /** To run scripts */
   scripts: Scripts;
 
   /** To search pages */
-  search: Searcher;
+  search: Searcher<T>;
 
   /** To store cached stuff in the _cache folder */
   cache: Cache | undefined;
 
   /** To write the generated pages in the dest folder */
-  writer: Writer;
+  writer: Writer<Partial<T>>;
 
   /** Data assigned with site.data() */
-  scopedData = new Map<string, RawData>([["/", {}]]);
+  scopedData = new Map<string, Partial<T>>([["/", {}]]);
 
   /** Pages created with site.page() */
-  scopedPages = new Map<string, RawData[]>();
+  scopedPages = new Map<string, T[]>();
 
   /** Components created with site.component() */
-  scopedComponents = new Map<string, Components>();
+  scopedComponents = new Map<string, Components<T>>();
 
   /** Hooks installed by the plugins */
   // deno-lint-ignore no-explicit-any
@@ -141,18 +195,18 @@ export default class Site {
   debugBar?: DebugBar;
 
   /** The generated pages are stored here */
-  readonly pages: Page[] = [];
+  readonly pages: ProcessedPage<T>[] = [];
 
   /** The static files to be copied are stored here */
-  readonly files: StaticFile[] = [];
+  readonly files: ProcessedStaticFile<T>[] = [];
 
   fetch: Deno.ServeHandler;
 
   watcher?: FSWatcher;
   server?: Server;
 
-  constructor(options?: SiteOptions) {
-    this.options = merge(defaults, options);
+  constructor(options?: SiteOptions<T>) {
+    this.options = merge(defaults, options as SiteOptions);
 
     const src = this.src();
     const dest = this.dest();
@@ -165,7 +219,7 @@ export default class Site {
 
     const dataLoader = new DataLoader({ formats });
     const componentLoader = new ComponentLoader({ formats });
-    const source = new Source({
+    const source = new Source<T>({
       fs,
       dataLoader,
       componentLoader,
@@ -183,9 +237,9 @@ export default class Site {
 
     // To render pages
     const scopes = new Scopes();
-    const processors = new Processors();
-    const preprocessors = new Processors();
-    const renderer = new Renderer({
+    const processors = new Processors<T>();
+    const preprocessors = new Processors<T>();
+    const renderer = new Renderer<T>({
       prettyUrls,
       preprocessors,
       formats,
@@ -194,16 +248,16 @@ export default class Site {
     });
 
     // Other stuff
-    const events = new Events<SiteEvent>();
+    const events = new Events<SiteEvent<T>>();
     const scripts = new Scripts({ cwd });
-    const writer = new FSWriter({ dest, caseSensitiveUrls });
+    const writer = new FSWriter<T>({ dest, caseSensitiveUrls });
 
-    const searcher = new Searcher({
+    const searcher = new Searcher<T>({
       pages: this.pages,
       files: this.files,
       sourceData: source.data,
       filters: [
-        (data: Data) => data.page.isHTML,
+        (page) => page.isHTML,
         filter404page(server.page404), // not the 404 page
       ],
     });
@@ -313,7 +367,7 @@ export default class Site {
   /** Add a listener to an event */
   addEventListener<K extends SiteEventType>(
     type: K,
-    listener: EventListener<Event & SiteEvent<K>> | string,
+    listener: EventListener<SiteEvent<K>> | string,
     options?: EventOptions,
   ): this {
     const fn = typeof listener === "string"
@@ -325,14 +379,13 @@ export default class Site {
   }
 
   /** Dispatch an event */
-  dispatchEvent(event: SiteEvent): Promise<boolean> {
+  dispatchEvent(event: SiteEvent<T>): Promise<boolean> {
     return this.events.dispatchEvent(event);
   }
 
   /** Use a plugin */
-  use(plugin: Plugin): this {
-    plugin(this);
-    return this;
+  use<O extends UnknownData>(plugin: Plugin<T, O>): Site<T & O> {
+    return plugin(this) as Site<T & O>;
   }
 
   /**
@@ -365,7 +418,7 @@ export default class Site {
    */
   loadPages(
     extensions: string[],
-    options: LoadPagesOptions | Loader = {},
+    options: LoadPagesOptions<T> | Loader = {},
   ): this {
     if (typeof options === "function") {
       options = { loader: options };
@@ -400,11 +453,11 @@ export default class Site {
   }
 
   /** Register a preprocessor for some extensions */
-  preprocess(processor: Processor): this;
-  preprocess(extensions: Extensions, processor: Processor): this;
+  preprocess(processor: Processor<T>): this;
+  preprocess(extensions: Extensions, processor: Processor<T>): this;
   preprocess(
-    extensions: Extensions | Processor,
-    preprocessor?: Processor,
+    extensions: Extensions | Processor<T>,
+    preprocessor?: Processor<T>,
   ): this {
     if (typeof extensions === "function") {
       return this.preprocess("*", extensions);
@@ -420,9 +473,12 @@ export default class Site {
   }
 
   /** Register a processor for some extensions */
-  process(processor: Processor): this;
-  process(extensions: Extensions, processor: Processor): this;
-  process(extensions: Extensions | Processor, processor?: Processor): this {
+  process(processor: Processor<T>): this;
+  process(extensions: Extensions, processor: Processor<T>): this;
+  process(
+    extensions: Extensions | Processor<T>,
+    processor?: Processor<T>,
+  ): this {
     if (typeof extensions === "function") {
       return this.process("*", extensions);
     }
@@ -436,51 +492,67 @@ export default class Site {
   }
 
   /** Register a template filter */
-  filter(name: string, filter: Helper<HelperThis>, async = false): this {
+  filter(
+    name: string,
+    filter: Helper<HelperThis<T>>,
+    async = false,
+  ): this {
     return this.helper(name, filter, { type: "filter", async });
   }
 
   /** Register a template helper */
-  helper(name: string, fn: Helper<HelperThis>, options: HelperOptions): this {
+  helper(
+    name: string,
+    fn: Helper<HelperThis<T>>,
+    options: HelperOptions,
+  ): this {
     this.renderer.addHelper(name, fn, options);
     return this;
   }
 
   /** Register a basename parser */
-  parseBasename(parser: BasenameParser): this {
+  parseBasename(parser: BasenameParser<T>): this {
     this.source.basenameParsers.push(parser);
     return this;
   }
 
   /** Register extra data accessible by the layouts */
-  data(name: string, value: unknown, scope = "/"): this {
-    const data = this.scopedData.get(scope) || {};
-    data[name] = value;
+  data<K extends string, V>(
+    name: K,
+    value: V,
+    scope = "/",
+  ): Site<T & { [K_ in K]?: V }> {
+    const scoped: Partial<T> = this.scopedData.get(scope) ?? {};
+    const data = { ...scoped, [name]: value };
     this.scopedData.set(scope, data);
-    return this;
+    return this as Site<T & { [K_ in K]?: V }>;
   }
 
   /** Register a page */
-  page(data: Partial<Data>, scope = "/"): this {
+  page(data: T, scope = "/"): this {
     const pages = this.scopedPages.get(scope) || [];
     pages.push(data);
     this.scopedPages.set(scope, pages);
     return this;
   }
 
-  /** Register an extra component accesible by the layouts */
-  component(context: string, component: UserComponent, scope = "/"): this {
+  /** Register an extra component accessible by the layouts */
+  component(
+    context: string,
+    component: UserComponent<T>,
+    scope = "/",
+  ): this {
     const pieces = context.split(".");
-    const scopedComponents: Components = this.scopedComponents.get(scope) ||
+    const scopedComponents: Components<T> = this.scopedComponents.get(scope) ||
       new Map();
-    let components: Components = scopedComponents;
+    let components: Components<T> = scopedComponents;
 
     while (pieces.length) {
       const name = pieces.shift()!;
       if (!components.get(name)) {
         components.set(name, new Map());
       }
-      components = components.get(name) as Components;
+      components = components.get(name) as Components<T>;
     }
 
     const assets = new Map<string, string>();
@@ -502,13 +574,21 @@ export default class Site {
   }
 
   /** Register a merging strategy for a data key */
-  mergeKey(key: string, merge: MergeStrategy, scope = "/"): this {
-    const data = this.scopedData.get(scope) || {};
-    const mergedKeys = data.mergedKeys || {};
+  mergeKey(
+    key: string,
+    merge: MergeStrategy,
+    scope = "/",
+  ): Site<T & { mergedKeys?: Record<string, MergeStrategy> }> {
+    const data: Partial<T> & {
+      mergedKeys?: Record<string, MergeStrategy>;
+    } = this.scopedData.get(scope) || {};
+    const mergedKeys: Record<string, MergeStrategy> = data.mergedKeys || {};
     mergedKeys[key] = merge;
     data.mergedKeys = mergedKeys;
     this.scopedData.set(scope, data);
-    return this;
+    return this as Site<
+      T & { mergedKeys?: Record<string, MergeStrategy> }
+    >;
   }
 
   /** Add files or directories to the site */
@@ -825,7 +905,7 @@ export default class Site {
    */
   async #loadPages(
     filters: (entry: Entry) => boolean,
-  ): Promise<[Page[], StaticFile[]]> {
+  ): Promise<[ProcessedPage<T>[], ProcessedStaticFile<T>[]]> {
     // Get the site content
     this.debugBar?.startMeasure("load");
     const showDrafts = envBoolean("LUME_DRAFTS");
@@ -866,7 +946,7 @@ export default class Site {
    * Internal function to render pages
    * Used by build and update actions
    */
-  async #buildPages(pages: Page[]): Promise<boolean> {
+  async #buildPages(pages: ProcessedPage<T>[]): Promise<boolean> {
     // Promote the files that must be preprocessed to pages
     const preExtensions = this.preprocessors.extensions;
     await filesToPages(
@@ -906,7 +986,9 @@ export default class Site {
         const existingFile = this.search.file(
           path.replace(/.m?js$/, "{.mjs,.js,.ts}"),
         );
-        const page = await this.getOrCreatePage(existingFile || path);
+        const page = await this.getOrCreatePage(
+          existingFile || path,
+        );
         page.text = insertContent(
           page.text,
           await compileJS(path, entries, this.fs.entries),
@@ -979,9 +1061,7 @@ export default class Site {
       // Has a search query
       const match = path.match(/^(.*)\s*\(([^)]+)\)$/);
       const srcPath = match ? match[1] : path;
-      const pages = match
-        ? this.search.pages(match[2]).map<Page>((data) => data.page!)
-        : this.pages;
+      const pages = match ? this.search.pages(match[2]) : this.pages;
 
       // It's a page
       const page = pages.find((page) =>
@@ -1016,11 +1096,11 @@ export default class Site {
     return absolute ? this.options.location.origin + path : path;
   }
 
-  removePage(file: StaticFile): StaticFile | undefined;
-  removePage(page: Page): Page | undefined;
+  removePage(file: StaticFile<T>): StaticFile<T> | undefined;
+  removePage(page: Page<T>): Page<T> | undefined;
   removePage(
-    urlOrPage: string | Page | StaticFile,
-  ): Page | StaticFile | undefined {
+    urlOrPage: string | Page<T> | StaticFile<T>,
+  ): Page<T> | StaticFile<T> | undefined {
     if (typeof urlOrPage === "string") {
       const url = urlOrPage;
 
@@ -1052,7 +1132,8 @@ export default class Site {
     }
   }
 
-  async getOrCreatePage(url: string): Promise<Page> {
+  async getOrCreatePage(data: T): Promise<Page<T>> {
+    let { url } = data;
     url = normalizePath(url);
 
     // It's a page
@@ -1066,7 +1147,7 @@ export default class Site {
     const index = this.files.findIndex((f) => f.outputPath === url);
 
     if (index > -1) {
-      const file = this.files.splice(index, 1)[0];
+      const file = this.files.splice(index, 1)[0]!;
       const page = await file.toPage();
       this.pages.push(page);
       return page;
@@ -1076,13 +1157,13 @@ export default class Site {
     const entry = this.fs.entries.get(url);
     if (entry) {
       const { content } = await entry.getContent(binaryLoader);
-      const page = Page.create({ url }, { entry });
+      const page = Page.create({ ...data, url }, { entry });
       page.content = content as Uint8Array<ArrayBuffer>;
       this.pages.push(page);
       return page;
     }
 
-    const newPage = Page.create({ url });
+    const newPage = Page.create({ ...data, url });
     this.pages.push(newPage);
     return newPage;
   }
@@ -1190,7 +1271,8 @@ export interface ResolveOptions {
 }
 
 /** The options to configure the site build */
-export interface SiteOptions {
+// deno-lint-ignore ban-types
+export interface SiteOptions<T = {}> {
   /** The path of the current working directory */
   cwd?: string;
 
@@ -1232,6 +1314,9 @@ export interface SiteOptions {
 
   /** The components options */
   components?: ComponentsOptions;
+
+  /** Global data to initialize */
+  data?: T;
 }
 
 /** The options to configure the local server */
@@ -1291,18 +1376,18 @@ export interface ComponentsOptions {
   placeholder?: string;
 }
 
-export type SiteEventMap = {
+export type SiteEventMap<T extends UnknownData> = {
   // deno-lint-ignore ban-types
   afterLoad: {};
   beforeBuild: {
     /** the list of pages that have been saved */
-    pages: Page[];
+    pages: Page<T>[];
   };
   afterBuild: {
     /** the list of pages that have been saved */
-    pages: Page[];
+    pages: ProcessedPage<T>[];
     /** contains the list of static files that have been copied */
-    staticFiles: StaticFile[];
+    staticFiles: ProcessedStaticFile<T>[];
   };
   beforeUpdate: {
     /** the files that were changed */
@@ -1310,19 +1395,19 @@ export type SiteEventMap = {
   };
   afterUpdate: {
     /** the files that were changed */
-    files: Set<string>;
+    files?: Set<string>;
     /** the list of pages that have been saved */
-    pages: Page[];
+    pages: ProcessedPage<T>[];
     /** contains the list of static files that have been copied */
-    staticFiles: StaticFile[];
+    staticFiles: ProcessedStaticFile<T>[];
   };
   beforeRender: {
     /** the list of pages that are about to render */
-    pages: Page[];
+    pages: ProcessedPage<T>[];
   };
   afterRender: {
     /** the list of pages that have been rendered */
-    pages: Page[];
+    pages: Page<T>[];
   };
   // deno-lint-ignore ban-types
   beforeSave: {};
@@ -1332,23 +1417,25 @@ export type SiteEventMap = {
   idle: {};
 };
 
-export interface LoadPagesOptions {
+export interface LoadPagesOptions<T> {
   loader?: Loader;
   engine?: Engine | Engine[];
   pageSubExtension?: string;
 }
 
 /** Custom events for site build */
-export type SiteEvent<T extends SiteEventType = SiteEventType> =
+export type SiteEvent<T, E extends SiteEventType = SiteEventType> =
   & Event
-  & SiteEventMap[T]
-  & { type: T };
+  & SiteEventMap<T>[E]
+  & { type: E };
 
 /** The available event types */
-export type SiteEventType = keyof SiteEventMap;
+export type SiteEventType = keyof SiteEventMap<UnknownData>;
 
 /** A generic Lume plugin */
-export type Plugin = (site: Site) => void;
+export type Plugin<I extends UnknownData, O extends UnknownData> = (
+  site: Site<I>,
+) => Site<O>;
 
 function pathBelongs(base: string, path?: string): boolean {
   if (!path) {

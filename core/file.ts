@@ -1,23 +1,24 @@
-import { posix } from "../deps/path.ts";
 import { documentToString, stringToDocument } from "./utils/dom.ts";
 import binaryLoader from "./loaders/binary.ts";
 import { decodeURIComponentSafe } from "./utils/path.ts";
 
-import type { MergeStrategy } from "./utils/merge_data.ts";
-import type { ProxyComponents } from "./components.ts";
 import type { Entry } from "./fs.ts";
+import { posix } from "../deps/path.ts";
+import { MergeStrategy } from "./utils/merge_data.ts";
+import { ProxyComponents } from "./components.ts";
+import { isPlainObject } from "./utils/object.ts";
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 const URL_IS_HTML = /(\/|\.x?html)$/;
 
 /** A page of the site */
-export class Page<D extends Data = Data> {
+export class Page<T extends RawData = RawData> {
   /** The src info */
   src: Src;
 
   /** Used to save the page data */
-  data: D = {} as D;
+  data: T;
 
   /** Whether this page comes from a copied file with site.copy() */
   isCopy = false;
@@ -29,52 +30,57 @@ export class Page<D extends Data = Data> {
   #document?: Document;
 
   /** Convenient way to create a page dynamically */
-  static create(
-    data: Partial<Data> & { url: string },
+  static create<T extends RawData & { content?: Content }>(
+    data: T,
     src?: Partial<Src>,
-  ): Page {
-    let { url, ...rest } = data;
-    const basename = posix.basename(url).replace(/\.[\w.]+$/, "");
-    const page = new Page(src);
+  ): Page<T> {
+    if (typeof data.url === "string") {
+      const basename = posix.basename(data.url).replace(/\.[\w.]+$/, "");
+      data.basename = basename;
 
-    if (url.endsWith("/index.html")) {
-      url = url.slice(0, -10);
+      if (data.url.endsWith("/index.html")) {
+        data.url = data.url.slice(0, -10);
+      }
     }
 
-    page.data = { ...rest, url, page, basename } as Data;
-    page.content = data.content as Content | undefined;
+    const page = new Page<T>(data, src);
+    page.content = data.content;
 
     return page;
   }
 
-  constructor(src?: Partial<Src>) {
+  constructor(data: T, src?: Partial<Src>) {
+    this.data = data;
     this.src = { path: "", ext: "", ...src };
   }
 
+  overwrite<U extends RawData>(data: U): this is Page<U> {
+    Object.assign(this.data, data);
+    return true;
+  }
+
   /** Duplicate this page. */
-  duplicate(index: number | undefined, data: D): Page<D> {
-    const page = new Page<D>({ ...this.src });
+  duplicate<U extends RawData>(index: number | undefined, data: U): Page<U> {
+    const page = new Page<U>(data, { ...this.src });
 
     if (index !== undefined) {
       page.src.path += `[${index}]`;
     }
-
-    data.page = page;
-    page.data = data;
 
     return page;
   }
 
   /** To check if the page is HTML */
   get isHTML(): boolean {
-    return URL_IS_HTML.test(this.data.url);
+    const url = getUrl(this.data.url, this);
+    return !!url && URL_IS_HTML.test(url);
   }
 
   /** Returns the output path of this page */
   get outputPath(): string {
-    const url = this.data.url;
-    const outputPath = url.endsWith("/") ? url + "index.html" : url;
-    return decodeURIComponentSafe(outputPath);
+    const url = getUrl(this.data.url, this);
+    const outputPath = url && url.endsWith("/") ? url + "index.html" : url;
+    return outputPath ? decodeURIComponentSafe(outputPath) : "";
   }
 
   /** Returns the source path of this page */
@@ -140,40 +146,43 @@ export class Page<D extends Data = Data> {
   }
 }
 
-export class StaticFile<D extends Data = Data> {
+export class StaticFile<T extends RawData = RawData> {
   /** The src info */
   src: Required<Src>;
 
   /** Used to save the contextual data */
-  data: D = {} as D;
+  data: T;
 
   /** Whether this file must be copied with site.copy() */
   isCopy = false;
 
-  static create(
-    data: Partial<Data> & { url: string },
+  static create<T extends RawData>(
+    data: T,
     src: Required<Src>,
-  ): StaticFile {
-    const file = new StaticFile(src);
-    file.data = { ...data } as Data;
+  ): StaticFile<T> {
+    const file = new StaticFile(data, src);
     return file;
   }
 
-  constructor(src: Required<Src>) {
+  constructor(data: T, src: Required<Src>) {
+    this.data = data;
     this.src = src;
   }
 
-  async toPage(): Promise<Page> {
+  async toPage(): Promise<Page<T>> {
     const { content } = await this.src.entry.getContent(binaryLoader);
-    const page = Page.create(this.data, this.src);
-    page.content = content as Uint8Array<ArrayBuffer>;
+    const page = Page.create(
+      { ...this.data, content: content as Uint8Array<ArrayBuffer> },
+      this.src,
+    );
     page.isCopy = this.isCopy;
     return page;
   }
 
   /** Returns the output path of this page */
   get outputPath(): string {
-    return decodeURIComponentSafe(this.data.url);
+    const url = getUrl(this.data.url);
+    return url ? decodeURIComponentSafe(url) : "";
   }
 
   /** Returns the source path of this page */
@@ -198,14 +207,13 @@ export interface Src {
   entry?: Entry;
 }
 
+export type UnknownData = Record<string, unknown>;
+
 /** The .content property for a Page */
 export type Content = Uint8Array<ArrayBuffer> | string;
 
 /** The data of a page declared initially */
-export interface RawData {
-  /** List of tags assigned to a page or folder */
-  tags?: string | string[];
-
+export interface RawData extends UnknownData {
   /** The url of a page */
   url?: string | false | ((page: Page) => string | false);
 
@@ -232,25 +240,10 @@ export interface RawData {
 
   /** To configure how some data keys will be merged with the parent */
   mergedKeys?: Record<string, MergeStrategy>;
-
-  // deno-lint-ignore no-explicit-any
-  [index: string]: any;
 }
 
 /** The data of a page/folder once loaded and processed */
 export interface Data extends RawData {
-  /** The title of the page */
-  title?: string;
-
-  /** The type of the page (used to group pages in collections) */
-  type?: string;
-
-  /** The id of the page (used to identify a page in a collection) */
-  id?: string | number;
-
-  /** List of tags assigned to a page or folder */
-  tags: string[];
-
   /** The url of a page */
   url: string;
 
@@ -265,44 +258,78 @@ export interface Data extends RawData {
    * @see https://lume.land/docs/core/components/
    */
   comp: ProxyComponents;
-
-  /** The page reference */
-  page: Page;
-
-  /** The language of the page */
-  lang?: string;
-
-  /**
-   * Unmatched Language URL
-   * The url for when the user's language doesn't match with any of the site's available languages.
-   *
-   * Valid values are:
-   * - External URL string (http, https), which is language selector page
-   * - Source path string (/), which is language selector page
-   * - Language code (en, gl, vi), which is fallback language page
-   *
-   * This option is made for x-default feature.
-   * @see https://developers.google.com/search/docs/specialty/international/localized-versions#xdefault
-   */
-  unmatchedLangUrl?: string;
-
-  /**
-   * Alternate pages (for languages)
-   * @see https://lume.land/plugins/multilanguage/
-   */
-  alternates?: Data[];
 }
 
 /** Promote files to pages */
-export async function filesToPages(
-  files: StaticFile[],
-  pages: Page[],
-  filter: (file: StaticFile) => boolean,
+export async function filesToPages<T extends RawData>(
+  files: StaticFile<T>[],
+  pages: Page<T>[],
+  filter: (file: StaticFile<T>) => boolean,
 ): Promise<void> {
-  const toRemove: StaticFile[] = files.filter(filter);
+  const toRemove = files.filter(filter);
 
   for (const file of toRemove) {
     pages.push(await file.toPage());
     files.splice(files.indexOf(file), 1);
   }
+}
+
+export function ensureRawData(data: UnknownData): data is RawData {
+  if (
+    typeof data.url !== "undefined" && typeof data.url !== "string" &&
+    typeof data.url !== "function" && data.url !== false
+  ) {
+    return false;
+  }
+  if (
+    typeof data.basename !== "undefined" && typeof data.basename !== "string"
+  ) {
+    return false;
+  }
+  if (typeof data.draft !== "undefined" && typeof data.draft !== "boolean") {
+    return false;
+  }
+  if (
+    typeof data.date !== "undefined" && typeof data.date !== "string" &&
+    typeof data.date !== "number" && !(data.date instanceof Date)
+  ) {
+    return false;
+  }
+  if (
+    typeof data.renderOrder !== "undefined" &&
+    typeof data.renderOrder !== "number"
+  ) {
+    return false;
+  }
+  if (
+    typeof data.layout !== "undefined" && typeof data.layout !== "string"
+  ) {
+    return false;
+  }
+  if (
+    typeof data.templateEngine !== "undefined" &&
+    typeof data.templateEngine !== "string" &&
+    !Array.isArray(data.templateEngine)
+  ) {
+    return false;
+  }
+  if (!isPlainObject(data.mergedKeys)) {
+    return false;
+  }
+
+  return true;
+}
+
+function getUrl(value: unknown, page?: Page): string | false | undefined {
+  let url = value;
+  if (typeof url === "function" && page) {
+    url = url(page);
+  }
+  if (typeof url === "boolean" && !url) {
+    return url;
+  }
+  if (typeof url === "string") {
+    return url;
+  }
+  return undefined;
 }

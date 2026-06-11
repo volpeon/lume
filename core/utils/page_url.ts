@@ -2,13 +2,15 @@ import { posix } from "../../deps/path.ts";
 import { decodeURIComponentSafe, getExtension, normalizePath } from "./path.ts";
 
 import type { Destination } from "../source.ts";
-import type { Data, Page, RawData } from "../file.ts";
+import type { Page, RawData } from "../file.ts";
 
 /** Returns a function to filter the 404 page */
-export function filter404page(page404?: string): (page: Data) => boolean {
+export function filter404page(
+  page404?: string,
+): (page: Page) => boolean {
   const url404 = page404 ? normalizePath(page404) : undefined;
 
-  return url404 ? (data: Data) => data.url !== url404 : () => true;
+  return url404 ? (page: Page) => page.data.url !== url404 : () => true;
 }
 
 /** Returns the final part of a url */
@@ -26,17 +28,12 @@ export function getBasename(url: string): string {
 
 /** Returns the final URL assigned to a page */
 export function getPageUrl(
-  page: Page,
+  page: Page<RawData & { basename: string }>,
   prettyUrls: boolean,
   parentPath: string,
   destination?: Destination | string,
 ): string | false {
-  const data = page.data as RawData;
-  let { url } = data;
-
-  if (url === false) {
-    return false;
-  }
+  let { url } = page.data;
 
   if (typeof url === "function") {
     page.data.url = getDefaultUrl(page.data.basename, parentPath, prettyUrls);
@@ -74,7 +71,7 @@ export function getPageUrl(
   }
 
   const defaultUrl = getDefaultUrl(
-    String(page.data.basename),
+    page.data.basename,
     parentPath,
     prettyUrls,
   );
