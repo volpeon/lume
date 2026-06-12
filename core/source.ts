@@ -654,14 +654,14 @@ export default class Source<T extends RawData> {
   }
 }
 
-export type ProcessedStaticFile<T> = StaticFile<
+export type ProcessedStaticFile<T = UnknownData> = StaticFile<
   Partial<T> & RawData & {
     basename: string;
     url: string;
   }
 >;
 
-export type ProcessedPage<T> = Page<
+export type ProcessedPage<T = UnknownData> = Page<
   Partial<T> & RawData & {
     url: string;
     basename: string;

@@ -334,8 +334,8 @@ export default class Site<T extends UnknownData = UnknownData> {
   }
 
   /** Use a plugin */
-  use<O extends UnknownData>(plugin: Plugin<T, O>): Site<T & O> {
-    return plugin(this) as Site<T & O>;
+  use(plugin: Plugin<T>): Site<T> {
+    return plugin(this) as Site<T>;
   }
 
   /**
@@ -1387,9 +1387,9 @@ export type SiteEvent<
 export type SiteEventType = keyof SiteEventMap<UnknownData>;
 
 /** A generic Lume plugin */
-export type Plugin<I extends UnknownData, O extends UnknownData> = (
-  site: Site<I>,
-) => Site<O>;
+export type Plugin<T extends UnknownData> = (
+  site: Site<T>,
+) => Site<T>;
 
 function pathBelongs(base: string, path?: string): boolean {
   if (!path) {

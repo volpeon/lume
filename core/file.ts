@@ -5,7 +5,6 @@ import { decodeURIComponentSafe } from "./utils/path.ts";
 import type { Entry } from "./fs.ts";
 import { posix } from "../deps/path.ts";
 import { MergeStrategy } from "./utils/merge_data.ts";
-import { ProxyComponents } from "./components.ts";
 import { isPlainObject } from "./utils/object.ts";
 
 const decoder = new TextDecoder();
@@ -13,7 +12,7 @@ const encoder = new TextEncoder();
 const URL_IS_HTML = /(\/|\.x?html)$/;
 
 /** A page of the site */
-export class Page<T extends UnknownData = UnknownData> {
+export class Page<T extends UnknownData = Data> {
   /** The src info */
   src: Src;
 
@@ -156,7 +155,7 @@ export class Page<T extends UnknownData = UnknownData> {
   }
 }
 
-export class StaticFile<T extends UnknownData = UnknownData> {
+export class StaticFile<T extends UnknownData = Data> {
   /** The src info */
   src: Required<Src>;
 
@@ -268,13 +267,7 @@ export interface Data extends RawData {
   basename: string;
 
   /** The date creation of the page */
-  date: Date;
-
-  /**
-   * The available components
-   * @see https://lume.land/docs/core/components/
-   */
-  comp: ProxyComponents;
+  date?: Date;
 }
 
 /** Promote files to pages */
@@ -339,7 +332,7 @@ export function ensureRawData(data: UnknownData): data is RawData {
 
 function getUrl(
   value: unknown,
-  page?: Page,
+  page?: Page<UnknownData>,
 ): string | false | undefined {
   let url = value;
   if (typeof url === "function" && page) {

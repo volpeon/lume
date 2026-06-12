@@ -62,7 +62,7 @@ export class FSWriter implements Writer {
    * Save a page in the dest folder
    * Returns a boolean indicating if the page has saved
    */
-  async savePage(page: Page): Promise<boolean> {
+  async savePage(page: Page<UnknownData>): Promise<boolean> {
     const { sourcePath, outputPath, content } = page;
     // Ignore empty pages
     if (!content) {
@@ -130,7 +130,7 @@ export class FSWriter implements Writer {
    * Copy a static file in the dest folder
    * Returns a boolean indicating if the file has saved
    */
-  async copyFile(file: StaticFile): Promise<boolean> {
+  async copyFile(file: StaticFile<UnknownData>): Promise<boolean> {
     const { entry } = file.src;
 
     if (entry.flags.has("saved")) {
