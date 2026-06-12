@@ -1,5 +1,5 @@
 import { join, posix } from "../deps/path.ts";
-import { isPlainObject, Merge, merge } from "./utils/object.ts";
+import { Merge, merge } from "./utils/object.ts";
 import { isUrl, normalizePath } from "./utils/path.ts";
 import { envBoolean, setEnv } from "./utils/env.ts";
 import { log } from "./utils/log.ts";
@@ -35,19 +35,9 @@ import type {
   ProcessedPage,
   ProcessedStaticFile,
 } from "./source.ts";
-import type {
-  Components,
-  ProxyComponents,
-  UserComponent,
-} from "./components.ts";
+import type { Components, UserComponent } from "./components.ts";
 import { StaticFile } from "./file.ts";
-import type {
-  Engine,
-  Helper,
-  HelperOptions,
-  HelperThis,
-  RendererData,
-} from "./renderer.ts";
+import type { Engine, Helper, HelperOptions, HelperThis } from "./renderer.ts";
 import type { Event, EventListener, EventOptions } from "./events.ts";
 import type { Processor } from "./processors.ts";
 import type { Extensions } from "./utils/path.ts";
@@ -56,46 +46,6 @@ import type { Middleware } from "./server.ts";
 import type { ScopeFilter } from "./scopes.ts";
 import type { ScriptOrFunction } from "./scripts.ts";
 import type { MergeStrategy } from "./utils/merge_data.ts";
-
-interface MinimalData {
-  [key: string]: unknown;
-  children?: unknown;
-  content?: unknown;
-  date?: string | number | Date | undefined;
-  comp?: ProxyComponents | undefined;
-  layout?: string | undefined;
-  draft?: boolean;
-  renderOrder?: number | undefined;
-  templateEngine?: string | string[] | undefined;
-}
-
-function validateMinimalData(data: unknown): data is MinimalData {
-  if (!isPlainObject(data)) {
-    return false;
-  }
-
-  if (
-    typeof data.date !== "undefined" && typeof data.date !== "string" &&
-    typeof data.date !== "number" &&
-    !(data.date instanceof Date)
-  ) {
-    return false;
-  }
-
-  if (typeof data.comp !== "object") {
-    return false;
-  }
-
-  if (typeof data.layout !== "undefined" && typeof data.layout !== "string") {
-    return false;
-  }
-
-  if (typeof data.draft !== "undefined" && typeof data.draft !== "boolean") {
-    return false;
-  }
-
-  return true;
-}
 
 /** Default options of the site */
 const defaults = {
@@ -140,13 +90,13 @@ export default class Site<T extends UnknownData = UnknownData> {
   fs: FS;
 
   /** Info about how to handle different file formats */
-  formats: Formats<T>;
+  formats: Formats;
 
   /** To load all _data files */
-  dataLoader: DataLoader<T>;
+  dataLoader: DataLoader;
 
   /** To load reusable components */
-  componentLoader: ComponentLoader<T>;
+  componentLoader: ComponentLoader;
 
   /** To scan the src folder */
   source: Source<T>;
@@ -176,7 +126,7 @@ export default class Site<T extends UnknownData = UnknownData> {
   cache: Cache | undefined;
 
   /** To write the generated pages in the dest folder */
-  writer: Writer<Partial<T>>;
+  writer: Writer;
 
   /** Data assigned with site.data() */
   scopedData = new Map<string, Partial<T>>([["/", {}]]);
@@ -185,7 +135,7 @@ export default class Site<T extends UnknownData = UnknownData> {
   scopedPages = new Map<string, T[]>();
 
   /** Components created with site.component() */
-  scopedComponents = new Map<string, Components<T>>();
+  scopedComponents = new Map<string, Components>();
 
   /** Hooks installed by the plugins */
   // deno-lint-ignore no-explicit-any
@@ -250,7 +200,7 @@ export default class Site<T extends UnknownData = UnknownData> {
     // Other stuff
     const events = new Events<SiteEvent<T>>();
     const scripts = new Scripts({ cwd });
-    const writer = new FSWriter<T>({ dest, caseSensitiveUrls });
+    const writer = new FSWriter({ dest, caseSensitiveUrls });
 
     const searcher = new Searcher<T>({
       pages: this.pages,
@@ -367,7 +317,7 @@ export default class Site<T extends UnknownData = UnknownData> {
   /** Add a listener to an event */
   addEventListener<K extends SiteEventType>(
     type: K,
-    listener: EventListener<SiteEvent<K>> | string,
+    listener: EventListener<SiteEvent<T, K>> | string,
     options?: EventOptions,
   ): this {
     const fn = typeof listener === "string"
@@ -539,20 +489,20 @@ export default class Site<T extends UnknownData = UnknownData> {
   /** Register an extra component accessible by the layouts */
   component(
     context: string,
-    component: UserComponent<T>,
+    component: UserComponent,
     scope = "/",
   ): this {
     const pieces = context.split(".");
-    const scopedComponents: Components<T> = this.scopedComponents.get(scope) ||
+    const scopedComponents: Components = this.scopedComponents.get(scope) ||
       new Map();
-    let components: Components<T> = scopedComponents;
+    let components: Components = scopedComponents;
 
     while (pieces.length) {
       const name = pieces.shift()!;
       if (!components.get(name)) {
         components.set(name, new Map());
       }
-      components = components.get(name) as Components<T>;
+      components = components.get(name) as Components;
     }
 
     const assets = new Map<string, string>();
@@ -1417,14 +1367,17 @@ export type SiteEventMap<T extends UnknownData> = {
   idle: {};
 };
 
-export interface LoadPagesOptions<T> {
+export interface LoadPagesOptions {
   loader?: Loader;
   engine?: Engine | Engine[];
   pageSubExtension?: string;
 }
 
 /** Custom events for site build */
-export type SiteEvent<T, E extends SiteEventType = SiteEventType> =
+export type SiteEvent<
+  T extends UnknownData,
+  E extends SiteEventType = SiteEventType,
+> =
   & Event
   & SiteEventMap<T>[E]
   & { type: E };

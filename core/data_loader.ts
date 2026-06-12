@@ -4,19 +4,19 @@ import { isPlainObject } from "./utils/object.ts";
 import type { Entry } from "./fs.ts";
 import type Formats from "./formats.ts";
 
-export interface Options<T> {
+export interface Options {
   /** The registered file formats */
-  formats: Formats<T>;
+  formats: Formats;
 }
 
 /**
  * Class to load data files.
  */
-export default class DataLoader<T> {
+export default class DataLoader {
   /** List of extensions to load data files and the loader used */
-  formats: Formats<T>;
+  formats: Formats;
 
-  constructor(options: Options<T>) {
+  constructor(options: Options) {
     this.formats = options.formats;
   }
 

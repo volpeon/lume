@@ -5,7 +5,7 @@ import { sha1 } from "./utils/digest.ts";
 import { log } from "./utils/log.ts";
 import binaryLoader from "./loaders/binary.ts";
 
-import type { Page, StaticFile, UnknownData } from "./file.ts";
+import type { Page, StaticFile } from "./file.ts";
 
 export interface Options {
   dest: string;
@@ -13,9 +13,9 @@ export interface Options {
 }
 
 /** Generic interface for Writer */
-export interface Writer<T extends UnknownData> {
-  savePages(pages: Page<T>[]): Promise<Page<T>[]>;
-  copyFiles(files: StaticFile<T>[]): Promise<StaticFile<T>[]>;
+export interface Writer {
+  savePages(pages: Page[]): Promise<Page[]>;
+  copyFiles(files: StaticFile[]): Promise<StaticFile[]>;
   clear(): Promise<void>;
   removeFiles(files: string[]): Promise<void>;
 }
@@ -24,7 +24,7 @@ export interface Writer<T extends UnknownData> {
  * Class to write the generated pages and static files
  * in the dest folder.
  */
-export class FSWriter<T extends UnknownData> implements Writer<T> {
+export class FSWriter implements Writer {
   dest: string;
   caseSensitiveUrls: boolean;
 
@@ -40,8 +40,8 @@ export class FSWriter<T extends UnknownData> implements Writer<T> {
    * Save the pages in the dest folder
    * Returns an array of pages that have been saved
    */
-  async savePages(pages: Page<T>[]): Promise<Page<T>[]> {
-    const savedPages: Page<T>[] = [];
+  async savePages(pages: Page[]): Promise<Page[]> {
+    const savedPages: Page[] = [];
     ++this.#saveCount;
 
     await concurrent(
@@ -60,7 +60,7 @@ export class FSWriter<T extends UnknownData> implements Writer<T> {
    * Save a page in the dest folder
    * Returns a boolean indicating if the page has saved
    */
-  async savePage(page: Page<T>): Promise<boolean> {
+  async savePage(page: Page): Promise<boolean> {
     const { sourcePath, outputPath, content } = page;
     // Ignore empty pages
     if (!content) {
@@ -107,8 +107,8 @@ export class FSWriter<T extends UnknownData> implements Writer<T> {
   /**
    * Copy the static files in the dest folder
    */
-  async copyFiles(files: StaticFile<T>[]): Promise<StaticFile<T>[]> {
-    const copyFiles: StaticFile<T>[] = [];
+  async copyFiles(files: StaticFile[]): Promise<StaticFile[]> {
+    const copyFiles: StaticFile[] = [];
 
     await concurrent(
       files,

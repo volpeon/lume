@@ -24,12 +24,12 @@ import type {
 import { log } from "./utils/log.ts";
 
 export interface Options<T extends UnknownData> {
-  formats: Formats<T>;
-  dataLoader: DataLoader<T>;
-  componentLoader: ComponentLoader<T>;
+  formats: Formats;
+  dataLoader: DataLoader;
+  componentLoader: ComponentLoader;
   scopedData: Map<string, Record<string, unknown>>;
   scopedPages: Map<string, Record<string, unknown>[]>;
-  scopedComponents: Map<string, Components<T>>;
+  scopedComponents: Map<string, Components>;
   basenameParsers: BasenameParser<T>[];
   fs: FS;
   prettyUrls: boolean;
@@ -43,18 +43,18 @@ export interface Options<T extends UnknownData> {
  * Scan and load files from the source folder
  * with the data, pages, assets and static files
  */
-export default class Source<T extends { comp: ProxyComponents }> {
+export default class Source<T extends RawData> {
   /** Filesystem reader to scan folders */
   fs: FS;
 
   /** To load all _data files */
-  dataLoader: DataLoader<T>;
+  dataLoader: DataLoader;
 
   /** To load all components */
-  componentLoader: ComponentLoader<T>;
+  componentLoader: ComponentLoader;
 
   /** Info about how to handle different file formats */
-  formats: Formats<T>;
+  formats: Formats;
 
   /** The list of paths to ignore */
   ignored = new Set<string>();
@@ -69,7 +69,7 @@ export default class Source<T extends { comp: ProxyComponents }> {
   scopedPages: Map<string, Record<string, unknown>[]>;
 
   /** The components assigned per path */
-  scopedComponents: Map<string, Components<T>>;
+  scopedComponents: Map<string, Components>;
 
   /** Use pretty URLs */
   prettyUrls: boolean;
@@ -202,7 +202,7 @@ export default class Source<T extends { comp: ProxyComponents }> {
     buildFilters: BuildFilter<T>[],
     dir: Entry,
     parentPath: string,
-    parentComponents: Components<T>,
+    parentComponents: Components,
     parentData: Partial<T>,
     pages: ProcessedPage<T>[],
     staticFiles: ProcessedStaticFile<T>[],
@@ -454,7 +454,7 @@ export default class Source<T extends { comp: ProxyComponents }> {
   async #loadDirData(
     dir: Entry,
     parentData: Partial<T>,
-  ): Promise<Partial<T> & { basename: string }> {
+  ): Promise<Partial<T> & { basename: string; comp?: ProxyComponents }> {
     // Parse the directory's basename
     const { basename, ...parsedData } = runBasenameParsers(
       dir.name,
@@ -496,12 +496,12 @@ export default class Source<T extends { comp: ProxyComponents }> {
    */
   async #loadDirComponents(
     dir: Entry,
-    parentComponents: Components<T>,
+    parentComponents: Components,
     data: Partial<T> & { basename: string },
-  ): Promise<Components<T>> {
+  ): Promise<Components> {
     // Components registered from site.component()
     const scopedComponents = this.scopedComponents.get(dir.path);
-    let loadedComponents: Components<T> | undefined;
+    let loadedComponents: Components | undefined;
 
     // Load _components files
     for (const entry of dir.children.values()) {
@@ -573,7 +573,7 @@ export default class Source<T extends { comp: ProxyComponents }> {
   /** Load a page from a file entry */
   async #loadPage(
     entry: Entry,
-    format: Format<T>,
+    format: Format,
     dirData: Partial<T>,
     dirPath: string,
     destination?: Destination | string,
@@ -682,7 +682,7 @@ export type BasenameParser<T> = (
 ) => Record<string, unknown> | undefined;
 
 /** Merge the cascade components */
-function mergeComponents<T>(...components: Components<T>[]): Components<T> {
+function mergeComponents<T>(...components: Components[]): Components {
   return components.reduce((previous, current) => {
     const components = new Map(previous);
 

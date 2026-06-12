@@ -18,7 +18,7 @@ export interface Options<T extends UnknownData> {
   includes: string;
   prettyUrls: boolean;
   preprocessors: Processors<T>;
-  formats: Formats<T>;
+  formats: Formats;
   fs: FS;
 }
 
@@ -42,7 +42,7 @@ export default class Renderer<
   preprocessors: Processors<T>;
 
   /** Available file formats */
-  formats: Formats<T>;
+  formats: Formats;
 
   /** The registered helpers */
   helpers = new Map<string, [Helper, HelperOptions]>();
