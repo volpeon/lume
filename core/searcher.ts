@@ -15,7 +15,7 @@ export interface Options<T extends UnknownData> {
   files: StaticFile<T>[];
 
   /** Context data */
-  sourceData: Map<string, T>;
+  sourceData: Map<string, Partial<T> & { basename: string }>;
 
   /** Filters to apply to all page searches */
   filters?: Filter<T>[];
@@ -28,7 +28,7 @@ type Condition = [string, string, unknown];
 export default class Searcher<T extends SearcherData> {
   #pages: Page<T>[];
   #files: StaticFile<T>[];
-  #sourceData: Map<string, T>;
+  #sourceData: Map<string, Partial<T> & { basename: string }>;
   #cache = new Map<string, Page<T>[]>();
   #cacheFiles = new Map<string, string[]>();
   #filters: Filter<T>[];
@@ -49,7 +49,7 @@ export default class Searcher<T extends SearcherData> {
   /**
    * Return the data in the scope of a path (file or folder)
    */
-  data(path = "/"): T | undefined {
+  data(path = "/"): Partial<T> | undefined {
     const normalized = normalizePath(path);
     const dirData = this.#sourceData.get(normalized);
 

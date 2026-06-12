@@ -5,7 +5,7 @@ import { sha1 } from "./utils/digest.ts";
 import { log } from "./utils/log.ts";
 import binaryLoader from "./loaders/binary.ts";
 
-import type { Page, StaticFile } from "./file.ts";
+import type { Page, StaticFile, UnknownData } from "./file.ts";
 
 export interface Options {
   dest: string;
@@ -14,8 +14,10 @@ export interface Options {
 
 /** Generic interface for Writer */
 export interface Writer {
-  savePages(pages: Page[]): Promise<Page[]>;
-  copyFiles(files: StaticFile[]): Promise<StaticFile[]>;
+  savePages<T extends UnknownData>(pages: Page<T>[]): Promise<Page<T>[]>;
+  copyFiles<T extends UnknownData>(
+    files: StaticFile<T>[],
+  ): Promise<StaticFile<T>[]>;
   clear(): Promise<void>;
   removeFiles(files: string[]): Promise<void>;
 }
@@ -40,8 +42,8 @@ export class FSWriter implements Writer {
    * Save the pages in the dest folder
    * Returns an array of pages that have been saved
    */
-  async savePages(pages: Page[]): Promise<Page[]> {
-    const savedPages: Page[] = [];
+  async savePages<T extends UnknownData>(pages: Page<T>[]): Promise<Page<T>[]> {
+    const savedPages: Page<T>[] = [];
     ++this.#saveCount;
 
     await concurrent(
@@ -107,8 +109,10 @@ export class FSWriter implements Writer {
   /**
    * Copy the static files in the dest folder
    */
-  async copyFiles(files: StaticFile[]): Promise<StaticFile[]> {
-    const copyFiles: StaticFile[] = [];
+  async copyFiles<T extends UnknownData>(
+    files: StaticFile<T>[],
+  ): Promise<StaticFile<T>[]> {
+    const copyFiles: StaticFile<T>[] = [];
 
     await concurrent(
       files,

@@ -202,7 +202,7 @@ export default class Site<T extends UnknownData = UnknownData> {
     const scripts = new Scripts({ cwd });
     const writer = new FSWriter({ dest, caseSensitiveUrls });
 
-    const searcher = new Searcher<T>({
+    const searcher = new Searcher({
       pages: this.pages,
       files: this.files,
       sourceData: source.data,
@@ -320,7 +320,7 @@ export default class Site<T extends UnknownData = UnknownData> {
     listener: EventListener<SiteEvent<T, K>> | string,
     options?: EventOptions,
   ): this {
-    const fn = typeof listener === "string"
+    const fn: EventListener<SiteEvent<T, K>> = typeof listener === "string"
       ? () => this.run(listener)
       : listener;
 
@@ -368,7 +368,7 @@ export default class Site<T extends UnknownData = UnknownData> {
    */
   loadPages(
     extensions: string[],
-    options: LoadPagesOptions<T> | Loader = {},
+    options: LoadPagesOptions | Loader = {},
   ): this {
     if (typeof options === "function") {
       options = { loader: options };
@@ -1046,11 +1046,13 @@ export default class Site<T extends UnknownData = UnknownData> {
     return absolute ? this.options.location.origin + path : path;
   }
 
-  removePage(file: StaticFile<T>): StaticFile<T> | undefined;
-  removePage(page: Page<T>): Page<T> | undefined;
+  removePage<U extends UnknownData>(
+    file: StaticFile<U>,
+  ): StaticFile<U> | undefined;
+  removePage<U extends UnknownData>(page: Page<U>): Page<U> | undefined;
   removePage(
-    urlOrPage: string | Page<T> | StaticFile<T>,
-  ): Page<T> | StaticFile<T> | undefined {
+    urlOrPage: string | Page | StaticFile,
+  ): Page | StaticFile | undefined {
     if (typeof urlOrPage === "string") {
       const url = urlOrPage;
 
@@ -1082,8 +1084,7 @@ export default class Site<T extends UnknownData = UnknownData> {
     }
   }
 
-  async getOrCreatePage(data: T): Promise<Page<T>> {
-    let { url } = data;
+  async getOrCreatePage(url: string): Promise<ProcessedPage<T>> {
     url = normalizePath(url);
 
     // It's a page
@@ -1107,13 +1108,13 @@ export default class Site<T extends UnknownData = UnknownData> {
     const entry = this.fs.entries.get(url);
     if (entry) {
       const { content } = await entry.getContent(binaryLoader);
-      const page = Page.create({ ...data, url }, { entry });
+      const page = Page.create({ url }, { entry });
       page.content = content as Uint8Array<ArrayBuffer>;
       this.pages.push(page);
       return page;
     }
 
-    const newPage = Page.create({ ...data, url });
+    const newPage = Page.create({ url });
     this.pages.push(newPage);
     return newPage;
   }
